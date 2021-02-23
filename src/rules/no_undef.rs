@@ -31,10 +31,15 @@ impl LintRule for NoUndef {
   fn lint_program(&self, context: &mut Context, program: &Program) {
     let mut collector = BindingCollector {
       declared: Default::default(),
+      injected_imports: vec![],
     };
     program.visit_all_with(program, &mut collector);
 
-    let mut visitor = NoUndefVisitor::new(context, collector.declared);
+    let mut visitor = NoUndefVisitor::new(
+      context,
+      collector.declared,
+      collector.injected_imports,
+    );
     program.visit_with(program, &mut visitor);
   }
 }
@@ -42,6 +47,8 @@ impl LintRule for NoUndef {
 struct BindingCollector {
   /// If there exists a binding with such id, it's not global.
   declared: HashSet<Id>,
+  /// Injected imports.
+  injected_imports: Vec<String>,
 }
 
 impl BindingCollector {
@@ -87,6 +94,12 @@ impl VisitAll for BindingCollector {
     _: &dyn Node,
   ) {
     self.declare(i.local.to_id());
+  }
+
+  fn visit_import_decl(&mut self, i: &ImportDecl, _: &dyn Node) {
+    if i.specifiers.is_empty() {
+      self.injected_imports.push(i.src.value.to_string());
+    }
   }
 
   fn visit_var_declarator(&mut self, v: &VarDeclarator, _: &dyn Node) {
@@ -138,11 +151,20 @@ impl VisitAll for BindingCollector {
 struct NoUndefVisitor<'c> {
   context: &'c mut Context,
   declared: HashSet<Id>,
+  injected_imports: Vec<String>,
 }
 
 impl<'c> NoUndefVisitor<'c> {
-  fn new(context: &'c mut Context, declared: HashSet<Id>) -> Self {
-    Self { context, declared }
+  fn new(
+    context: &'c mut Context,
+    declared: HashSet<Id>,
+    injected_imports: Vec<String>,
+  ) -> Self {
+    Self {
+      context,
+      declared,
+      injected_imports,
+    }
   }
 
   fn check(&mut self, ident: &Ident) {
@@ -170,11 +192,13 @@ impl<'c> NoUndefVisitor<'c> {
       return;
     }
 
-    self.context.add_diagnostic(
-      ident.span,
-      "no-undef",
-      format!("{} is not defined", ident.sym),
-    )
+    let msg = if !self.injected_imports.is_empty() {
+      format!("{} is not defined. It might be injected by an import. Use `globalThis.{}`", ident.sym, ident.sym)
+    } else {
+      format!("{} is not defined", ident.sym)
+    };
+
+    self.context.add_diagnostic(ident.span, "no-undef", msg)
   }
 }
 
@@ -462,6 +486,12 @@ mod tests {
           col: 34,
           message: "Bar is not defined",
         },
+      ],
+      "import './global.js'; x;": [
+        {
+          col: 22,
+          message: "x is not defined. It might be injected by an import. Use `globalThis.x`",
+        }
       ],
     };
   }

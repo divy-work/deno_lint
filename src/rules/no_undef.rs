@@ -192,13 +192,15 @@ impl<'c> NoUndefVisitor<'c> {
       return;
     }
 
-    let msg = if !self.injected_imports.is_empty() {
-      format!("{} is not defined. It might be injected by an import. Use `globalThis.{}`", ident.sym, ident.sym)
+    if !self.injected_imports.is_empty() {
+      self.context.add_diagnostic_with_hint(ident.span, "no-undef", format!("{} is not defined", ident.sym), format!("It might be injected by an import. Try using `globalThis.{}` instead", ident.sym));
     } else {
-      format!("{} is not defined", ident.sym)
-    };
-
-    self.context.add_diagnostic(ident.span, "no-undef", msg)
+      self.context.add_diagnostic(
+        ident.span,
+        "no-undef",
+        format!("{} is not defined", ident.sym),
+      );
+    }
   }
 }
 
@@ -490,7 +492,8 @@ mod tests {
       "import './global.js'; x;": [
         {
           col: 22,
-          message: "x is not defined. It might be injected by an import. Use `globalThis.x`",
+          message: "x is not defined",
+          hint: "It might be injected by an import. Try using `globalThis.x` instead",
         }
       ],
     };
